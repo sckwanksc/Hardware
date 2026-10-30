@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>硬體引導大作戰：控制跌落設備</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", Roboto, sans-serif;
+    }
+    body {
+      background: #0f172a;
+      color: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    #game-container {
+      position: relative;
+      width: 100%;
+      max-width: 480px;
+      height: 680px;
+      background: #1e293b;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #334155;
+    }
+
+    /* 頂部 HUD */
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      background: #0f172a;
+      border-bottom: 2px solid #334155;
+      font-size: 14px;
+      font-weight: 700;
+      z-index: 5;
+    }
+    .hud-badge { display: flex; align-items: center; gap: 4px; }
+    .score-color { color: #facc15; }
+    .combo-color { color: #38bdf8; }
+    .lives-color { color: #f43f5e; letter-spacing: 2px; }
+
+    /* Canvas 遊戲畫布 */
+    #gameCanvas {
+      flex: 1;
+      width: 100%;
+      background: radial-gradient(circle at center, #1e293b 0%, #0b0f19 100%);
+      display: block;
+      cursor: pointer;
+    }
+
+    /* 底部輔助虛擬按鍵 */
+    .touch-controls {
+      display: flex;
+      height: 54px;
+      background: #0f172a;
+      border-top: 1px solid #334155;
+      z-index: 5;
+    }
+    .ctrl-btn {
+      flex: 1;
+      border: none;
+      background: #1e293b;
+      color: #94a3b8;
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .ctrl-btn:active {
+      background: #334155;
+      color: #38bdf8;
+    }
+    .ctrl-btn:first-child {
+      border-right: 1px solid #334155;
+    }
+
+    /* 彈出視窗（登入 / 結算） */
+    .modal-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(15, 23, 42, 0.95);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 20;
+    }
+    .modal-overlay.hidden { display: none !important; }
+    h2 { font-size: 24px; color: #38bdf8; margin-bottom: 8px; text-align: center; }
+    p.desc { font-size: 13px; color: #94a3b8; text-align: center; margin-bottom: 20px; line-height: 1.5; }
+
+    .form-group {
+      width: 100%;
+      max-width: 280px;
+      margin-bottom: 14px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #0b0f19;
+      color: #fff;
+      font-size: 15px;
+      outline: none;
+    }
+    .form-group input:focus { border-color: #38bdf8; }
+
+    .btn-main {
+      background: #38bdf8;
+      color: #0f172a;
+      font-weight: 800;
+      font-size: 16px;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 36px;
+      cursor: pointer;
+      margin-top: 10px;
+      transition: all 0.2s;
+    }
+    .btn-main:hover { background: #7dd3fc; transform: scale(1.02); }
+
+    /* 排行榜表格 */
+    .table-container {
+      width: 100%;
+      max-height: 220px;
+      overflow-y: auto;
+      margin: 14px 0;
+      border: 1px solid #334155;
+      border-radius: 8px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: center; }
+    th, td { padding: 8px; border-bottom: 1px solid #334155; }
+    th { background: #1e293b; color: #38bdf8; position: sticky; top: 0; }
+    .gold-rank { color: #facc15; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <div id="game-container">
+    <!-- 頂部 HUD -->
+    <div class="hud">
+      <div class="hud-badge"><span id="hud-user">未登入</span></div>
+      <div class="hud-badge score-color">分: <span id="hud-score">0</span></div>
+      <div class="hud-badge combo-color">連擊: <span id="hud-combo">0</span>x</div>
+      <div class="hud-badge lives-color" id="hud-lives">❤️❤️❤️</div>
+    </div>
+
+    <!-- 遊戲畫布 -->
+    <canvas id="gameCanvas" width="480" height="574"></canvas>
+
+    <!-- 底部觸控按鈕 -->
+    <div class="touch-controls">
+      <button class="ctrl-btn" id="leftBtn">⬅️ 向左引導 (Input)</button>
+      <button class="ctrl-btn" id="rightBtn">向右引導 (Output) ➡️</button>
+    </div>
+
+    <!-- 登入界面 -->
+    <div id="loginModal" class="modal-overlay">
+      <h2>🎮 硬體引導大作戰 📥📤</h2>
+      <p class="desc">
+        硬體設備將由上方落下！<br>
+        <b>直接控制掉落物</b>往左或往右移動：<br>
+        【輸入設備】導向<b>左方藍色格</b>，【輸出設備】導向<b>右方橙色格</b>！
+      </p>
+
+      <div class="form-group">
+        <label for="class-name">班別 (Class)</label>
+        <input type="text" id="class-name" placeholder="例如：1A 或 3C" maxlength="6">
+      </div>
+      <div class="form-group">
+        <label for="class-no">學號 (Class No.)</label>
+        <input type="number" id="class-no" placeholder="例如：15" min="1" max="50">
+      </div>
+
+      <button class="btn-main" onclick="startPlay()">開始挑戰</button>
+    </div>
+
+    <!-- 結算與排行榜界面 -->
+    <div id="overModal" class="modal-overlay hidden">
+      <h2 id="over-title">挑戰結束！</h2>
+      <p class="desc" id="over-score-text">最終得分：0 分</p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>排名</th>
+              <th>班別</th>
+              <th>學號</th>
+              <th>辨別數量</th>
+              <th>最終得分</th>
+            </tr>
+          </thead>
+          <tbody id="boardList"></tbody>
+        </table>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button class="btn-main" onclick="replay()">再玩一次</button>
+        <button class="btn-main" style="background:#475569; color:#fff;" onclick="clearRanks()">清空榜單</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- 題庫清單 ---
+    const ITEMS_DB = [
+      { name: "機械鍵盤", icon: "⌨️", type: "Input" },
+      { name: "光學滑鼠", icon: "🖱️", type: "Input" },
+      { name: "錄音麥克風", icon: "🎙️", type: "Input" },
+      { name: "條碼掃描槍", icon: "📟", type: "Input" },
+      { name: "視訊攝影機", icon: "📷", type: "Input" },
+      { name: "液晶顯示器", icon: "🖥️", type: "Output" },
+      { name: "彩色印表機", icon: "🖨️", type: "Output" },
+      { name: "立體聲喇叭", icon: "🔊", type: "Output" },
+      { name: "高畫質投影機", icon: "📽️", type: "Output" },
+      { name: "3D 列印機", icon: "🧊", type: "Output" },
+      { name: "觸控螢幕", icon: "📱", type: "Both" },
+      { name: "電競通話耳麥", icon: "🎧", type: "Both" },
+      { name: "VR 頭戴裝置", icon: "🥽", type: "Both" }
+    ];
+
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // 狀態變量
+    let student = { cls: "", no: "" };
+    let score = 0;
+    let combo = 0;
+    let lives = 3;
+    let passCount = 0;
+    let isPlaying = false;
+    let animationId = null;
+
+    // 當前受控制的跌落物件
+    let fallingItem = null;
+    let dropBaseSpeed = 2.2;
+    let particles = [];
+    let feedbackBanner = { text: "", color: "", timer: 0 };
+
+    // 鍵盤狀態
+    const keys = { left: false, right: false, down: false };
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") keys.left = true;
+      if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") keys.right = true;
+      if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") keys.down = true;
+    });
+    window.addEventListener("keyup", (e) => {
+      if (e.key === "ArrowLeft" || e.key === "a" || e.key === "A") keys.left = false;
+      if (e.key === "ArrowRight" || e.key === "d" || e.key === "D") keys.right = false;
+      if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") keys.down = false;
+    });
+
+    // 觸控／滑鼠直接控制跌下物水平位置
+    function updateFallingItemX(canvasX) {
+      if (!fallingItem) return;
+      fallingItem.x = canvasX - fallingItem.w / 2;
+      clampItemPosition();
+    }
+
+    function clampItemPosition() {
+      if (!fallingItem) return;
+      if (fallingItem.x < 10) fallingItem.x = 10;
+      if (fallingItem.x + fallingItem.w > canvas.width - 10) fallingItem.x = canvas.width - 10 - fallingItem.w;
+    }
+
+    canvas.addEventListener("mousemove", (e) => {
+      if (!isPlaying) return;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const mouseX = (e.clientX - rect.left) * scaleX;
+      updateFallingItemX(mouseX);
+    });
+
+    canvas.addEventListener("touchmove", (e) => {
+      if (!isPlaying) return;
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const touchX = (e.touches[0].clientX - rect.left) * scaleX;
+      updateFallingItemX(touchX);
+    }, { passive: false });
+
+    // 底部虛擬按鍵
+    const leftBtn = document.getElementById("leftBtn");
+    const rightBtn = document.getElementById("rightBtn");
+    leftBtn.addEventListener("mousedown", () => keys.left = true);
+    leftBtn.addEventListener("mouseup", () => keys.left = false);
+    leftBtn.addEventListener("touchstart", (e) => { e.preventDefault(); keys.left = true; });
+    leftBtn.addEventListener("touchend", () => keys.left = false);
+
+    rightBtn.addEventListener("mousedown", () => keys.right = true);
+    rightBtn.addEventListener("mouseup", () => keys.right = false);
+    rightBtn.addEventListener("touchstart", (e) => { e.preventDefault(); keys.right = true; });
+    rightBtn.addEventListener("touchend", () => keys.right = false);
+
+    // 開始遊戲
+    function startPlay() {
+      const c = document.getElementById("class-name").value.trim().toUpperCase();
+      const n = document.getElementById("class-no").value.trim();
+      if (!c || !n) {
+        alert("請先輸入班別與學號！");
+        return;
+      }
+      student = { cls: c, no: n };
+      document.getElementById("hud-user").textContent = `${c} (${n})`;
+      document.getElementById("loginModal").classList.add("hidden");
+
+      score = 0;
+      combo = 0;
+      lives = 3;
+      passCount = 0;
+      dropBaseSpeed = 2.2;
+      particles = [];
+      updateHUD();
+
+      isPlaying = true;
+      spawnItem();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function spawnItem() {
+      const template = ITEMS_DB[Math.floor(Math.random() * ITEMS_DB.length)];
+      fallingItem = {
+        name: template.name,
+        icon: template.icon,
+        type: template.type,
+        w: 96,
+        h: 52,
+        x: (canvas.width - 96) / 2, // 從正中央落下
+        y: -50,
+        vx: 8.5,                   // 水平受控移動速度
+        vy: dropBaseSpeed
+      };
+    }
+
+    function updateHUD() {
+      document.getElementById("hud-score").textContent = score;
+      document.getElementById("hud-combo").textContent = combo;
+      document.getElementById("hud-lives").textContent = "❤️".repeat(Math.max(0, lives));
+    }
+
+    // 判定設備掉入底部方格
+    function checkLanding() {
+      if (!fallingItem) return;
+
+      const triggerY = canvas.height - 84; // 進入底部方格的高度線
+
+      if (fallingItem.y + fallingItem.h >= triggerY) {
+        const itemCenterX = fallingItem.x + fallingItem.w / 2;
+        const middleWallStart = canvas.width / 2 - 12;
+        const middleWallEnd = canvas.width / 2 + 12;
+
+        let landedZone = null;
+        if (itemCenterX < middleWallStart) {
+          landedZone = "Input"; // 跌入左側輸入格
+        } else if (itemCenterX > middleWallEnd) {
+          landedZone = "Output"; // 跌入右側輸出格
+        } else {
+          landedZone = "Wall"; // 掉在中央分隔牆
+        }
+
+        const isCorrect = (fallingItem.type === "Both" && (landedZone === "Input" || landedZone === "Output")) ||
+                          (fallingItem.type === landedZone);
+
+        if (isCorrect) {
+          combo++;
+          passCount++;
+          const gain = 100 + combo * 25;
+          score += gain;
+          triggerFeedback(`🎯 成功歸類！+${gain}`, "#4ade80");
+          createParticles(itemCenterX, triggerY, "#38bdf8");
+          dropBaseSpeed = Math.min(6.2, dropBaseSpeed + 0.12);
+        } else {
+          combo = 0;
+          lives--;
+          if (landedZone === "Wall") {
+            triggerFeedback("💥 撞上中央分隔區！", "#f97316");
+          } else {
+            triggerFeedback(`❌ 分類錯誤！那是${fallingItem.type === 'Input' ? '輸入' : '輸出'}設備`, "#f43f5e");
+          }
+          createParticles(itemCenterX, triggerY, "#f43f5e");
+        }
+
+        updateHUD();
+        if (lives <= 0) {
+          gameOver();
+          return;
+        }
+        spawnItem();
+      }
+    }
+
+    function triggerFeedback(text, color) {
+      feedbackBanner = { text, color, timer: 50 };
+    }
+
+    function createParticles(x, y, color) {
+      for (let i = 0; i < 14; i++) {
+        particles.push({
+          x, y,
+          vx: (Math.random() - 0.5) * 6,
+          vy: (Math.random() - 0.7) * 5,
+          life: 25,
+          color
+        });
+      }
+    }
+
+    // 主遊戲循環
+    function gameLoop() {
+      if (!isPlaying) return;
+
+      // 1. 玩家操控當前掉落設備
+      if (fallingItem) {
+        if (keys.left) fallingItem.x -= fallingItem.vx;
+        if (keys.right) fallingItem.x += fallingItem.vx;
+        clampItemPosition();
+
+        // 垂直下落（支援加速鍵）
+        const currentVy = keys.down ? fallingItem.vy * 2.2 : fallingItem.vy;
+        fallingItem.y += currentVy;
+      }
+
+      // 2. 判定落入方格
+      checkLanding();
+
+      // 3. 畫面繪製
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBackgroundGrid();
+      drawGoalZones();
+      drawFallingItem();
+      drawParticles();
+      drawFeedback();
+
+      animationId = requestAnimationFrame(gameLoop);
+    }
+
+    // 繪製科技風格網格
+    function drawBackgroundGrid() {
+      ctx.strokeStyle = "rgba(51, 65, 85, 0.2)";
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+    }
+
+    // 繪製底部固定輸入與輸出目標格（無提示例子純淨版）
+    function drawGoalZones() {
+      const zoneH = 80;
+      const zoneY = canvas.height - zoneH;
+      const zoneW = canvas.width / 2 - 12;
+
+      // 左邊：📥 輸入目標格
+      ctx.fillStyle = "rgba(2, 132, 199, 0.25)";
+      ctx.beginPath();
+      ctx.roundRect(10, zoneY, zoneW - 10, zoneH - 10, 12);
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#0284c7";
+      ctx.stroke();
+
+      ctx.fillStyle = "#38bdf8";
+      ctx.font = "bold 17px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("📥 輸入設備 (Input)", (zoneW) / 2 + 5, zoneY + 44);
+
+      // 右邊：📤 輸出目標格
+      const rightX = canvas.width / 2 + 12;
+      ctx.fillStyle = "rgba(234, 88, 12, 0.25)";
+      ctx.beginPath();
+      ctx.roundRect(rightX, zoneY, zoneW - 10, zoneH - 10, 12);
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#ea580c";
+      ctx.stroke();
+
+      ctx.fillStyle = "#fb923c";
+      ctx.font = "bold 17px sans-serif";
+      ctx.fillText("📤 輸出設備 (Output)", rightX + (zoneW - 10) / 2, zoneY + 44);
+
+      // 中央隔離護欄
+      ctx.fillStyle = "#475569";
+      ctx.fillRect(canvas.width / 2 - 4, zoneY - 20, 8, zoneH + 20);
+    }
+
+    // 繪製當前受控的跌落物
+    function drawFallingItem() {
+      if (!fallingItem) return;
+
+      // 投影輔助導向線
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.25)";
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(fallingItem.x + fallingItem.w / 2, fallingItem.y + fallingItem.h);
+      ctx.lineTo(fallingItem.x + fallingItem.w / 2, canvas.height - 80);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 物件本體（發光懸浮卡片）
+      ctx.shadowColor = "#38bdf8";
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = "#1e293b";
+      ctx.beginPath();
+      ctx.roundRect(fallingItem.x, fallingItem.y, fallingItem.w, fallingItem.h, 10);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#38bdf8";
+      ctx.stroke();
+
+      // 控制箭頭提示
+      ctx.fillStyle = "#64748b";
+      ctx.font = "10px sans-serif";
+      ctx.fillText("◀ 控制方向 ▶", fallingItem.x + fallingItem.w / 2, fallingItem.y - 6);
+
+      // 圖標與名稱
+      ctx.textAlign = "center";
+      ctx.font = "20px sans-serif";
+      ctx.fillText(fallingItem.icon, fallingItem.x + fallingItem.w / 2, fallingItem.y + 24);
+
+      ctx.font = "bold 13px sans-serif";
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillText(fallingItem.name, fallingItem.x + fallingItem.w / 2, fallingItem.y + 44);
+    }
+
+    // 繪製粒子效果
+    function drawParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+    }
+
+    // 繪製反饋提示文字
+    function drawFeedback() {
+      if (feedbackBanner.timer > 0) {
+        feedbackBanner.timer--;
+        ctx.fillStyle = feedbackBanner.color;
+        ctx.font = "bold 18px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(feedbackBanner.text, canvas.width / 2, 70);
+      }
+    }
+
+    // 結算與保存
+    function gameOver() {
+      isPlaying = false;
+      cancelAnimationFrame(animationId);
+
+      document.getElementById("over-score-text").textContent = 
+        `學員：${student.cls} (${student.no}) ｜ 正確歸類：${passCount} 個 ｜ 最終得分：${score} 分`;
+
+      saveRecord(student.cls, student.no, passCount, score);
+      renderBoard();
+      document.getElementById("overModal").classList.remove("hidden");
+    }
+
+    function saveRecord(cls, no, count, finalScore) {
+      let data = JSON.parse(localStorage.getItem("io_guide_records") || "[]");
+      data.push({ cls, no, count, score: finalScore });
+      data.sort((a, b) => b.score - a.score);
+      data = data.slice(0, 10);
+      localStorage.setItem("io_guide_records", JSON.stringify(data));
+    }
+
+    function renderBoard() {
+      const tbody = document.getElementById("boardList");
+      tbody.innerHTML = "";
+      const data = JSON.parse(localStorage.getItem("io_guide_records") || "[]");
+
+      if (data.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="color:#64748b;">暫無排行榜資料</td></tr>`;
+        return;
+      }
+
+      data.forEach((item, index) => {
+        const tr = document.createElement("tr");
+        const rankClass = index === 0 ? "gold-rank" : "";
+        tr.innerHTML = `
+          <td class="${rankClass}">${index + 1}</td>
+          <td>${item.cls}</td>
+          <td>${item.no}</td>
+          <td>${item.count} 個</td>
+          <td style="color:#facc15; font-weight:bold;">${item.score}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function clearRanks() {
+      if (confirm("確定清空本機的所有成績記錄嗎？")) {
+        localStorage.removeItem("io_guide_records");
+        renderBoard();
+      }
+    }
+
+    function replay() {
+      document.getElementById("overModal").classList.add("hidden");
+      document.getElementById("loginModal").classList.remove("hidden");
+    }
+
+    renderBoard();
+  </script>
+</body>
+</html>
